@@ -8,13 +8,29 @@
 
     using GTA;
 
+    using LCPDFR.Networking.User;
+
     using LCPD_First_Response.Engine;
     using LCPD_First_Response.Engine.Input;
+    using LCPD_First_Response.Engine.Networking;
     using LCPD_First_Response.Engine.Scripting.Plugins;
     using LCPD_First_Response.Engine.Timers;
     using LCPD_First_Response.LCPDFR.API;
 
+    using LCPDFR.Networking;
+
     using SlimDX.XInput;
+
+    /// <summary>
+    /// The network messages.
+    /// </summary>
+    public enum ENetworkMessages
+    {
+        /// <summary>
+        /// The message sent when user requests backup.
+        /// </summary>
+        RequestBackup,
+    }
 
     /// <summary>
     /// Sample plugin making use of the LCPDFR API. In the attribute below you can specify the name of the plugin.
@@ -37,6 +53,7 @@
 
             // Listen for on duty event
             Functions.OnOnDutyStateChanged += this.Functions_OnOnDutyStateChanged;
+            Networking.JoinedNetworkGame += this.Networking_JoinedNetworkGame;
 
             Log.Info("Started", this);
         }
@@ -162,6 +179,23 @@
                     }
                 }
             }
+
+            // Send RequestBackup message in network game.
+            if (Functions.IsKeyDown(Keys.X))
+            {
+                if (Networking.IsInSession && Networking.IsConnected)
+                {
+                    if (Networking.IsHost)
+                    {
+                        Vector3 position = LPlayer.LocalPlayer.Ped.Position;
+
+                        // Tell client we need backup.
+                        DynamicData dynamicData = new DynamicData(Networking.GetServerInstance());
+                        dynamicData.Write(position);
+                        Networking.GetServerInstance().Send("API_Example", ENetworkMessages.RequestBackup, dynamicData);
+                    }
+                }
+            }
         }
 
         /// <summary>
@@ -169,6 +203,43 @@
         /// </summary>
         public override void Finally()
         {
+        }
+
+        /// <summary>
+        /// Called when player has joined a network game.
+        /// </summary>
+        private void Networking_JoinedNetworkGame()
+        {
+            // Just to be sure.
+            if (Networking.IsInSession && Networking.IsConnected)
+            {
+                // When client, listen for messages. Of course, this could be changed to work for host as well.
+                // It's recommended to use the same string identifier all the time.
+                if (!Networking.IsHost)
+                {
+                    Client client = Networking.GetClientInstance();
+                    client.AddUserDataHandler("API_Example", ENetworkMessages.RequestBackup, this.NeedBackupHandlerFunction);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Called when <see cref="ENetworkMessages.RequestBackup"/> has been received.
+        /// </summary>
+        /// <param name="sender">The sender.</param>
+        /// <param name="message">The message.</param>
+        private void NeedBackupHandlerFunction(NetworkServer sender, ReceivedUserMessage message)
+        {
+            // Read position and get associated area.
+            Vector3 position = message.ReadVector3();
+            string area = Functions.GetAreaStringFromPosition(position);
+
+            // Display message and blip.
+            Functions.PrintText(string.Format("Officer {0} requests backup at {1}", sender.SafeName, area), 5000);
+            Blip areaBlip = Functions.CreateBlipForArea(position, 25f);
+
+            // Cleanup.
+            DelayedCaller.Call(parameter => areaBlip.Delete(), this, 10000);
         }
 
         [ConsoleCommand("StartCallout", false)]
